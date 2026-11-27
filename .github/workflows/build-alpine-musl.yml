@@ -1,0 +1,68 @@
+
+name: Build LightSpeed Proxy for Alpine
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout LightSpeed v1.12.5
+        uses: actions/checkout@v4
+        with:
+          repository: ShibbityShwab/lightspeed
+          ref: v1.12.5
+          fetch-depth: 1
+
+      - name: Install musl toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Build proxy
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+        run: |
+          cargo build --release \
+            --target x86_64-unknown-linux-musl \
+            -p lightspeed-proxy \
+            --features quic
+
+      - name: Package and verify
+        run: |
+          mkdir -p dist/lightspeed-proxy-x86_64-unknown-linux-musl
+
+          cp target/x86_64-unknown-linux-musl/release/lightspeed-proxy \
+            dist/lightspeed-proxy-x86_64-unknown-linux-musl/
+
+          cp LICENSE CHANGELOG.md README.md \
+            dist/lightspeed-proxy-x86_64-unknown-linux-musl/
+
+          file dist/lightspeed-proxy-x86_64-unknown-linux-musl/lightspeed-proxy
+
+          tar -cJf dist/lightspeed-proxy-v1.12.5-x86_64-unknown-linux-musl.tar.xz \
+            -C dist lightspeed-proxy-x86_64-unknown-linux-musl
+
+          cd dist
+          sha256sum lightspeed-proxy-v1.12.5-x86_64-unknown-linux-musl.tar.xz \
+            > lightspeed-proxy-v1.12.5-x86_64-unknown-linux-musl.tar.xz.sha256
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lightspeed-proxy-alpine-musl-v1.12.5
+          path: |
+            dist/lightspeed-proxy-v1.12.5-x86_64-unknown-linux-musl.tar.xz
+            dist/lightspeed-proxy-v1.12.5-x86_64-unknown-linux-musl.tar.xz.sha256
+          retention-days: 7
