@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      # 1. 获取官方 v1.12.5 源码
       - name: Checkout LightSpeed v1.12.5
         uses: actions/checkout@v4
         with:
@@ -19,50 +20,75 @@ jobs:
           ref: v1.12.5
           fetch-depth: 1
 
-
+      # 2. 修复 musl 平台 libc 类型兼容问题
       - name: Patch musl libc type compatibility
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
+          # 修复 relay.rs
           relay = Path("proxy/src/relay.rs")
           source = relay.read_text()
-          old = """                libc::MSG_DONTWAIT,
-                  std::ptr::null_mut(),"""
-          new = """                libc::MSG_DONTWAIT as _,
-                  std::ptr::null_mut(),"""
 
-          if old not in source:
-              raise SystemExit("relay.rs: target code not found")
-          relay.write_text(source.replace(old, new, 1))
+          old = "libc::MSG_DONTWAIT,"
+          count = source.count(old)
 
+          if count != 1:
+              raise SystemExit(
+                  f"relay.rs: expected 1 MSG_DONTWAIT occurrence, found {count}"
+              )
+
+          source = source.replace(
+              old,
+              "libc::MSG_DONTWAIT as _,",
+              1
+          )
+
+          relay.write_text(source)
+          print("relay.rs: patched successfully")
+
+          # 修复 trace.rs
           trace = Path("proxy/src/trace.rs")
           source = trace.read_text()
-          old = "message.msg_controllen = control.len();"
-          new = "message.msg_controllen = control.len() as _;"
 
-          if old not in source:
-              raise SystemExit("trace.rs: target code not found")
-          trace.write_text(source.replace(old, new, 1))
+          pattern = r"(?m)^(\s*)message\.msg_controllen\s*=\s*control\.len\(\)\s*;"
 
-          print("musl libc type compatibility patches applied")
+          source, count = re.subn(
+              pattern,
+              r"\1message.msg_controllen = control.len() as _;",
+              source
+          )
+
+          if count != 1:
+              raise SystemExit(
+                  f"trace.rs: expected 1 msg_controllen assignment, found {count}"
+              )
+
+          trace.write_text(source)
+          print("trace.rs: patched successfully")
+
+          print("All musl compatibility patches applied.")
           PY
 
-
+      # 3. 安装 musl 编译工具
       - name: Install musl toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
 
+      # 4. 安装 Rust
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # 5. 安装 musl 编译目标
       - name: Add musl target
         run: |
           rustup target add x86_64-unknown-linux-musl
           rustup target list --installed
           rustc --version
 
+      # 6. 编译 LightSpeed Proxy
       - name: Build proxy
         env:
           CC_x86_64_unknown_linux_musl: musl-gcc
@@ -73,6 +99,7 @@ jobs:
             -p lightspeed-proxy \
             --features quic
 
+      # 7. 打包并生成 SHA256
       - name: Package and verify
         run: |
           mkdir -p dist/lightspeed-proxy-x86_64-unknown-linux-musl
@@ -89,9 +116,11 @@ jobs:
             -C dist lightspeed-proxy-x86_64-unknown-linux-musl
 
           cd dist
+
           sha256sum lightspeed-proxy-v1.12.5-x86_64-unknown-linux-musl.tar.xz \
             > lightspeed-proxy-v1.12.5-x86_64-unknown-linux-musl.tar.xz.sha256
 
+      # 8. 上传编译产物
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
