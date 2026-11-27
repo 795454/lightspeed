@@ -19,6 +19,36 @@ jobs:
           ref: v1.12.5
           fetch-depth: 1
 
+
+      - name: Patch musl libc type compatibility
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          relay = Path("proxy/src/relay.rs")
+          source = relay.read_text()
+          old = """                libc::MSG_DONTWAIT,
+                  std::ptr::null_mut(),"""
+          new = """                libc::MSG_DONTWAIT as _,
+                  std::ptr::null_mut(),"""
+
+          if old not in source:
+              raise SystemExit("relay.rs: target code not found")
+          relay.write_text(source.replace(old, new, 1))
+
+          trace = Path("proxy/src/trace.rs")
+          source = trace.read_text()
+          old = "message.msg_controllen = control.len();"
+          new = "message.msg_controllen = control.len() as _;"
+
+          if old not in source:
+              raise SystemExit("trace.rs: target code not found")
+          trace.write_text(source.replace(old, new, 1))
+
+          print("musl libc type compatibility patches applied")
+          PY
+
+
       - name: Install musl toolchain
         run: |
           sudo apt-get update
